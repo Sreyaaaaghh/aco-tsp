@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Interactive ACO TSP — Black Theme with Red Path</title>
+<style>
+  html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui;background:#000;color:#e6eef6}
+  .app{display:grid;grid-template-columns:1fr 200px;gap:16px;padding:16px;height:100vh;box-sizing:border-box}
+  .canvas-card{background:#000;border-radius:12px;padding:12px;display:flex;flex-direction:column}
+  canvas{flex:1;border-radius:8px;background:#000;cursor:crosshair}
+  .toolbar{display:flex;gap:8px;align-items:center;padding:8px 0}
+  .panel{background:#111;border-radius:12px;padding:12px;height:100%;overflow:auto}
+  label{display:block;font-size:13px;margin-bottom:6px}
+  input[type=number]{width:100%;padding:8px;border-radius:6px;border:none;background:#222;color:#e6eef6}
+  button{background:#00ffff;color:#000;border:none;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600}
+  button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.2);color:#ccc}
+  .small{font-size:12px;color:#ccc}
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="canvas-card">
+    <div style="font-weight:700;margin-bottom:6px">Interactive ACO — place points to build TSP</div>
+    <canvas id="c"></canvas>
+    <div class="toolbar">
+      <button id="start">Start</button>
+      <button id="pause" class="ghost">Pause</button>
+      <button id="reset" class="ghost">Reset</button>
+      <button id="clearPoints" class="ghost">Clear points</button>
+      <div style="margin-left:auto" class="small">Iterations: <span id="iter">0</span></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div style="font-weight:700;margin-bottom:10px">ACO Parameters</div>
+    <div class="param">
+      <label>Ants</label>
+      <input id="ants" type="number" min="1" value="20">
+    </div>
+    <div class="param">
+      <label>Iterations (max)</label>
+      <input id="maxIter" type="number" min="1" value="200">
+    </div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button id="step" class="ghost">Step once</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+function fitCanvas(){
+  canvas.width = Math.max(600, window.innerWidth - 240);
+  canvas.height = Math.max(400, window.innerHeight - 60);
+}
+fitCanvas(); window.addEventListener('resize', ()=>{fitCanvas(); draw();});
+
+let points = [];
+function addPoint(x,y){ points.push({x,y}); draw(); }
+function removePointNear(x,y){ const r=8; for(let i=0;i<points.length;i++){ if(Math.hypot(points[i].x-x,points[i].y-y)<=r){ points.splice(i,1); return true; }} return false; }
+canvas.addEventListener('click', (e)=>{ const rect = canvas.getBoundingClientRect(); addPoint(e.clientX-rect.left, e.clientY-rect.top); });
+canvas.addEventListener('contextmenu',(e)=>{ e.preventDefault(); const rect = canvas.getBoundingClientRect(); removePointNear(e.clientX-rect.left, e.clientY-rect.top); draw(); });
+
+let pheromone=null, distances=null, eta=null, bestSolution=null;
+let curIter=0, running=false;
+const antsInput=document.getElementById('ants');
+const maxIterInput=document.getElementById('maxIter');
+const iterLabel=document.getElementById('iter');
+
+function draw(){
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,canvas.width,canvas.height);
+
+  if(running || bestSolution){
+    // draw all possible connections as thinner, semi-transparent cyan lines
+    if(points.length>1){
+      ctx.strokeStyle='rgba(0,255,255,0.4)';
+      ctx.lineWidth=1.5;
+      for(let i=0;i<points.length;i++){
+        for(let j=i+1;j<points.length;j++){
+          ctx.beginPath();
+          ctx.moveTo(points[i].x, points[i].y);
+          ctx.lineTo(points[j].x, points[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+  }
+
+  // draw highlighted shortest path (solid red)
+  if(bestSolution && points.length>1){
+    ctx.beginPath();
+    const r=bestSolution.route;
+    ctx.moveTo(points[r[0]].x, points[r[0]].y);
+    for(let i=1;i<r.length;i++) ctx.lineTo(points[r[i]].x, points[r[i]].y);
+    ctx.lineTo(points[r[0]].x, points[r[0]].y);
+    ctx.strokeStyle='red'; ctx.lineWidth=5; ctx.stroke();
+  }
+
+  points.forEach((p)=>{ ctx.beginPath(); ctx.arc(p.x,p.y,5,0,Math.PI*2); ctx.fillStyle='#fff'; ctx.fill(); });
+}
+
+function initACO(){
+  const n=points.length; if(n<2)return;
+  distances=Array.from({length:n},()=>Array(n).fill(0));
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++){const dx=points[i].x-points[j].x,dy=points[i].y-points[j].y;distances[i][j]=Math.hypot(dx,dy)||1e-6;}
+  eta=Array.from({length:n},()=>Array(n).fill(0));
+  for(let i=0;i<n;i++)for(let j=0;j<n;j++)if(i!==j)eta[i][j]=1.0/distances[i][j];
+  pheromone=Array.from({length:n},()=>Array(n).fill(1));
+  bestSolution=null;curIter=0;iterLabel.textContent='0';
+}
+
+function randomChoice(cities, probs){const r=Math.random();let acc=0;for(let i=0;i<cities.length;i++){acc+=probs[i];if(r<=acc)return cities[i];}return cities[cities.length-1];}
+
+function buildSolution(ALPHA,BETA){
+  const n=points.length;const route=[];const start=Math.floor(Math.random()*n);route.push(start);const visited=new Set([start]);
+  while(route.length<n){const i=route[route.length-1];const allowed=[];for(let j=0;j<n;j++)if(!visited.has(j))allowed.push(j);
+    const vals=allowed.map(j=>Math.pow(pheromone[i][j],ALPHA)*Math.pow(eta[i][j],BETA));
+    const s=vals.reduce((a,b)=>a+b,0)||1e-9;const probs=vals.map(v=>v/s);
+    const next=randomChoice(allowed,probs);route.push(next);visited.add(next);}
+  return route;
+}
+function routeLength(route){let L=0;for(let i=0;i<route.length-1;i++)L+=distances[route[i]][route[i+1]];L+=distances[route[route.length-1]][route[0]];return L;}
+function evaporate(RHO){const n=pheromone.length;for(let i=0;i<n;i++)for(let j=0;j<n;j++)pheromone[i][j]*=(1-RHO);}
+function deposit(Q,solutions){solutions.forEach(s=>{const {route,len}=s;const delta=Q/len;for(let i=0;i<route.length-1;i++){const a=route[i],b=route[i+1];pheromone[a][b]+=delta;pheromone[b][a]+=delta;}const a=route[route.length-1],b=route[0];pheromone[a][b]+=delta;pheromone[b][a]+=delta;});}
+
+async function stepIteration(){
+  if(points.length<2)return;
+  const ants=Math.max(1,parseInt(antsInput.value));
+  const ALPHA=1,BETA=4,RHO=0.2,Q=100;
+  const sols=[];
+  for(let a=0;a<ants;a++){const r=buildSolution(ALPHA,BETA);const L=routeLength(r);sols.push({route:r,len:L});}
+  sols.forEach(s=>{if(!bestSolution||s.len<bestSolution.len){bestSolution={route:s.route.slice(),len:s.len};}});
+  evaporate(RHO);deposit(Q,sols);
+  curIter++;iterLabel.textContent=curIter;draw();
+}
+
+let paused=false;let runHandle=null;
+function runLoop(){if(!running)return;function loop(){if(!running)return;if(paused){runHandle=requestAnimationFrame(loop);return;}if(curIter>=parseInt(maxIterInput.value)){running=false;return;}stepIteration();runHandle=requestAnimationFrame(loop);}loop();}
+
+const startBtn=document.getElementById('start');const pauseBtn=document.getElementById('pause');const resetBtn=document.getElementById('reset');const clearPointsBtn=document.getElementById('clearPoints');const stepBtn=document.getElementById('step');
+
+startBtn.onclick=()=>{if(points.length<2){alert('Add at least 2 points');return;}initACO();running=true;paused=false;runLoop();draw();};
+pauseBtn.onclick=()=>{paused=!paused;pauseBtn.textContent=paused?'Resume':'Pause';};
+resetBtn.onclick=()=>{running=false;paused=false;pheromone=null;bestSolution=null;curIter=0;iterLabel.textContent='0';draw();};
+clearPointsBtn.onclick=()=>{points=[];resetBtn.onclick();draw();};
+stepBtn.onclick=async()=>{if(!pheromone)initACO();await stepIteration();};
+
+draw();
+</script>
+</body>
+</html>
