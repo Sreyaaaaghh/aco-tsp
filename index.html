@@ -3,10 +3,10 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>Interactive ACO TSP — Black Theme with Red Path</title>
+<title>Interactive ACO TSP — Black Theme with Red Path + Code Viewer</title>
 <style>
   html,body{height:100%;margin:0;font-family:Inter,ui-sans-serif,system-ui;background:#000;color:#e6eef6}
-  .app{display:grid;grid-template-columns:1fr 200px;gap:16px;padding:16px;height:100vh;box-sizing:border-box}
+  .app{display:grid;grid-template-columns:1fr 220px;gap:16px;padding:16px;height:100vh;box-sizing:border-box}
   .canvas-card{background:#000;border-radius:12px;padding:12px;display:flex;flex-direction:column}
   canvas{flex:1;border-radius:8px;background:#000;cursor:crosshair}
   .toolbar{display:flex;gap:8px;align-items:center;padding:8px 0}
@@ -16,6 +16,19 @@
   button{background:#00ffff;color:#000;border:none;padding:8px 10px;border-radius:8px;cursor:pointer;font-weight:600}
   button.ghost{background:transparent;border:1px solid rgba(255,255,255,0.2);color:#ccc}
   .small{font-size:12px;color:#ccc}
+  #codeContainer {
+    display:none;
+    background:#0b0b0b;
+    color:#00ff99;
+    padding:12px;
+    border-radius:10px;
+    margin:10px 16px;
+    white-space:pre-wrap;
+    overflow:auto;
+    max-height:50vh;
+    font-family:Consolas,monospace;
+    font-size:13px;
+  }
 </style>
 </head>
 <body>
@@ -28,6 +41,7 @@
       <button id="pause" class="ghost">Pause</button>
       <button id="reset" class="ghost">Reset</button>
       <button id="clearPoints" class="ghost">Clear points</button>
+      <button id="toggleCode" class="ghost">Show Code</button>
       <div style="margin-left:auto" class="small">Iterations: <span id="iter">0</span></div>
     </div>
   </div>
@@ -48,12 +62,14 @@
   </div>
 </div>
 
-<script>
+<div id="codeContainer"></div>
+
+<script id="sourceCode">
 const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 function fitCanvas(){
-  canvas.width = Math.max(600, window.innerWidth - 240);
-  canvas.height = Math.max(400, window.innerHeight - 60);
+  canvas.width = Math.max(600, window.innerWidth - 260);
+  canvas.height = Math.max(400, window.innerHeight - 80);
 }
 fitCanvas(); window.addEventListener('resize', ()=>{fitCanvas(); draw();});
 
@@ -75,7 +91,6 @@ function draw(){
   ctx.fillRect(0,0,canvas.width,canvas.height);
 
   if(running || bestSolution){
-    // draw all possible connections as thinner, semi-transparent cyan lines
     if(points.length>1){
       ctx.strokeStyle='rgba(0,255,255,0.4)';
       ctx.lineWidth=1.5;
@@ -90,7 +105,6 @@ function draw(){
     }
   }
 
-  // draw highlighted shortest path (solid red)
   if(bestSolution && points.length>1){
     ctx.beginPath();
     const r=bestSolution.route;
@@ -142,7 +156,6 @@ let paused=false;let runHandle=null;
 function runLoop(){if(!running)return;function loop(){if(!running)return;if(paused){runHandle=requestAnimationFrame(loop);return;}if(curIter>=parseInt(maxIterInput.value)){running=false;return;}stepIteration();runHandle=requestAnimationFrame(loop);}loop();}
 
 const startBtn=document.getElementById('start');const pauseBtn=document.getElementById('pause');const resetBtn=document.getElementById('reset');const clearPointsBtn=document.getElementById('clearPoints');const stepBtn=document.getElementById('step');
-
 startBtn.onclick=()=>{if(points.length<2){alert('Add at least 2 points');return;}initACO();running=true;paused=false;runLoop();draw();};
 pauseBtn.onclick=()=>{paused=!paused;pauseBtn.textContent=paused?'Resume':'Pause';};
 resetBtn.onclick=()=>{running=false;paused=false;pheromone=null;bestSolution=null;curIter=0;iterLabel.textContent='0';draw();};
@@ -150,6 +163,23 @@ clearPointsBtn.onclick=()=>{points=[];resetBtn.onclick();draw();};
 stepBtn.onclick=async()=>{if(!pheromone)initACO();await stepIteration();};
 
 draw();
+</script>
+
+<script>
+// Toggle Code Viewer
+const toggleBtn = document.getElementById('toggleCode');
+const codeContainer = document.getElementById('codeContainer');
+const code = document.getElementById('sourceCode').textContent.trim();
+codeContainer.textContent = code;
+toggleBtn.addEventListener('click', ()=>{
+  if(codeContainer.style.display==='none' || codeContainer.style.display===''){
+    codeContainer.style.display='block';
+    toggleBtn.textContent='Hide Code';
+  } else {
+    codeContainer.style.display='none';
+    toggleBtn.textContent='Show Code';
+  }
+});
 </script>
 </body>
 </html>
